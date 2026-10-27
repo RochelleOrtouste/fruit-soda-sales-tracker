@@ -126,6 +126,11 @@ with tab_order:
     with st.form("new_order_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
+            order_date = st.date_input(
+                "Order date",
+                value=now_local().date(),
+                max_value=now_local().date()
+            )
             flavor = st.selectbox("Flavor", FLAVORS, index=None, placeholder="Choose a flavor")
             cup_size = st.selectbox("Cup size", list(MENU.keys()), index=None, placeholder="Choose a cup size")
             quantity = st.number_input("Number of cups", min_value=1, max_value=200, value=1, step=1)
@@ -161,7 +166,7 @@ with tab_order:
             for err in errors:
                 st.error(err)
         else:
-            created = now_local()
+            created = datetime.combine(order_date, now_local().time())
             with connect() as con:
                 con.execute("""INSERT INTO orders
                     (created_at,flavor,cup_size,quantity,yakult_qty,nata_qty,subtotal,cash_received,
@@ -221,6 +226,11 @@ with tab_expenses:
     with st.form("expense_form", clear_on_submit=True):
         e1, e2 = st.columns(2)
         with e1:
+            expense_date = st.date_input(
+                "Expense date",
+                value=now_local().date(),
+                max_value=now_local().date()
+            )
             category = st.selectbox("Category", ["Ingredients / supplies", "Packaging", "Ice", "Transport / delivery", "Utilities", "Other"])
         with e2:
             description = st.text_input("Description", placeholder="e.g., 1 box of cups")
@@ -232,7 +242,7 @@ with tab_expenses:
         else:
             with connect() as con:
                 con.execute("INSERT INTO expenses(spent_at,category,description,amount) VALUES(?,?,?,?)",
-                            (now_local().isoformat(sep=" "), category, description.strip(), float(amount)))
+                            (datetime.combine(expense_date, now_local().time()).isoformat(sep=" "), category, description.strip(), float(amount)))
             st.success("Expense saved.")
     st.divider()
     expense_filter_date = st.date_input("View expenses for date", value=now_local().date(), key="expense_filter")
