@@ -618,15 +618,19 @@ with tab_dashboard:
             selected_expense_label = st.selectbox(
                 "Select an expense record to delete",
                 options=list(expense_options.keys()),
+                index=None,
+                placeholder="Please select an expense record...",
                 help="Open the dropdown and type to search by ID, date, category, description, or amount.",
             )
-            selected_expense_id = expense_options[selected_expense_label]
+            selected_expense_id = expense_options.get(selected_expense_label) if selected_expense_label else None
             confirm_expense_delete = st.checkbox(
                 "I confirm that I want to permanently delete this expense record."
             )
             delete_expense_submit = st.form_submit_button("Delete selected expense record")
         if delete_expense_submit:
-            if not confirm_expense_delete:
+            if selected_expense_id is None:
+                st.error("Please select an expense record first.")
+            elif not confirm_expense_delete:
                 st.error("Please confirm before deleting the expense record.")
             else:
                 with connect() as con:
