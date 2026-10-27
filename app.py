@@ -464,10 +464,13 @@ with tab_dashboard:
     order_cash_in = float((odf["cash_received"] - odf["change_returned"]).sum()) if not odf.empty else 0.0
     all_orders = load_orders()
     all_expenses = load_expenses()
+    total_sales = float(all_orders["subtotal"].sum()) if not all_orders.empty else 0.0
+    total_tips = float(all_orders["tip"].sum()) if not all_orders.empty else 0.0
+    total_unclaimed_change = float(all_orders["unclaimed_change"].sum()) if not all_orders.empty else 0.0
     total_expenses = float(all_expenses["amount"].sum()) if not all_expenses.empty else 0.0
     opening_cash = float(get_setting("opening_cash", "0"))
-    # Estimated cash currently available: opening cash + customer cash retained - recorded expenses.
-    # This is a cash balance, not total sales or profit.
+    # Customer cash retained includes sales, tips, and unclaimed change, based on
+    # cash actually received minus change returned. Do not add sales again to this.
     customer_cash_retained = float(
         (all_orders["cash_received"] - all_orders["change_returned"]).sum()
     ) if not all_orders.empty else 0.0
@@ -497,14 +500,29 @@ with tab_dashboard:
     st.caption("Sales exclude tips and unclaimed change. Cash received less change returned includes the order amount, tip, and any unclaimed change.")
     st.divider()
     st.subheader("Overall Capital Monitoring")
+    st.markdown("#### All-time sales and cash breakdown")
+    b1, b2, b3, b4 = st.columns(4)
+    b1.metric("Total sales", peso(total_sales))
+    b2.metric("Total tips", peso(total_tips))
+    b3.metric("Unclaimed change", peso(total_unclaimed_change))
+    b4.metric("Total expenses", peso(total_expenses))
+
+    st.markdown("**How your estimated cash is calculated**")
+    st.write(f"Opening cash: **{peso(opening_cash)}**")
+    st.write(f"Customer cash retained (cash received − change returned): **{peso(customer_cash_retained)}**")
+    st.write(f"Less total recorded expenses: **−{peso(total_expenses)}**")
+    st.write(f"**Estimated cash on hand = {peso(opening_cash)} + {peso(customer_cash_retained)} − {peso(total_expenses)} = {peso(current_cash)}**")
+    st.caption("Customer cash retained already includes the money collected from sales, tips, and any unclaimed change. Total sales are shown separately for transparency and must not be added to customer cash retained again.")
+
+    st.markdown("#### Capital recovery")
     m1, m2, m3 = st.columns(3)
-    m1.metric("Current estimated cash on hand", peso(current_cash))
-    m2.metric("Cash counted toward capital recovery", peso(capital_recovered))
+    m1.metric("Initial capital", peso(target))
+    m2.metric("Current estimated cash on hand", peso(current_cash))
     m3.metric("Capital still to recover", peso(remaining))
     if target > 0:
         progress = min(1.0, max(0.0, capital_recovered / target))
-        st.progress(progress, text=f"{progress*100:.1f}% of initial capital")
-    st.caption("Capital recovery here compares your initial capital target with estimated cash currently available. Record all business expenses, including restocking and supplies, and ensure opening cash is entered only once. Cash on hand is not the same as profit or total sales.")
+        st.progress(progress, text=f"{progress*100:.1f}% of initial capital represented by current cash")
+    st.caption("This estimates how much of your initial capital is represented by cash currently available; it is not a profit calculation. Actual cash can differ if transactions were not recorded, opening cash is incorrect, or money was used for unrecorded purchases.")
 
 with tab_expenses:
     st.subheader("Record an Expense")
