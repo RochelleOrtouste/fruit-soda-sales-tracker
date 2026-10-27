@@ -120,62 +120,234 @@ tab_order, tab_dashboard, tab_expenses, tab_records, tab_backup = st.tabs(
     ["🧾 New Order", "📊 Dashboard", "🧺 Daily Expenses", "📚 Records", "💾 Backup / Restore"]
 )
 
+
 with tab_order:
     st.subheader("New Customer Order")
-    st.info("Blank form = no order has been entered yet. Press **Save Order** only after checking the summary.")
-    with st.form("new_order_form", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            order_date = st.date_input(
-                "Order date",
-                value=now_local().date(),
-                max_value=now_local().date()
-            )
-            flavor = st.selectbox("Flavor", FLAVORS, index=None, placeholder="Choose a flavor")
-            cup_size = st.selectbox("Cup size", list(MENU.keys()), index=None, placeholder="Choose a cup size")
-            quantity = st.number_input("Number of cups", min_value=1, max_value=200, value=1, step=1)
-        with c2:
-            yakult_qty = st.number_input("Yakult add-on quantity", min_value=0, max_value=200, value=0, step=1)
-            nata_qty = st.number_input("Fruit jelly nata add-on quantity", min_value=0, max_value=200, value=0, step=1)
-        st.caption("Add-on quantities are the number of add-on portions. Example: 2 cups with Yakult on both cups = Yakult quantity 2.")
-        subtotal = (MENU[cup_size] * quantity if cup_size else 0) + (yakult_qty * ADDONS["Yakult"]) + (nata_qty * ADDONS["Fruit Jelly Nata"])
-        st.metric("Order total", peso(subtotal))
-        st.markdown("#### Payment")
-        p1, p2, p3 = st.columns(3)
-        with p1:
-            cash_received = st.number_input("Cash received (₱)", min_value=0.0, value=0.0, step=1.0)
-        with p2:
-            change_returned = st.number_input("Change actually returned (₱)", min_value=0.0, value=0.0, step=1.0)
-        with p3:
-            tip = st.number_input("Tip (₱)", min_value=0.0, value=0.0, step=1.0)
-        notes = st.text_input("Notes (optional)", placeholder="e.g., less ice, customer request")
-        save = st.form_submit_button("✅ Save Order", use_container_width=True)
+    st.info("Check the order summary before pressing Save Order.")
+
+    # Reset the fields after a successful save
+    if st.session_state.pop("clear_order_form", False):
+        st.session_state["order_date"] = now_local().date()
+        st.session_state["order_flavor"] = None
+        st.session_state["order_cup_size"] = None
+        st.session_state["order_quantity"] = 1
+        st.session_state["order_yakult_qty"] = 0
+        st.session_state["order_nata_qty"] = 0
+        st.session_state["order_cash"] = 0.0
+        st.session_state["order_change"] = 0.0
+        st.session_state["order_tip"] = 0.0
+        st.session_state["order_notes"] = ""
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        order_date = st.date_input(
+            "Order date",
+            value=now_local().date(),
+            max_value=now_local().date(),
+            key="order_date"
+        )
+
+        flavor = st.selectbox(
+            "Flavor",
+            FLAVORS,
+            index=None,
+            placeholder="Choose a flavor",
+            key="order_flavor"
+        )
+
+        cup_size = st.selectbox(
+            "Cup size",
+            list(MENU.keys()),
+            index=None,
+            placeholder="Choose a cup size",
+            key="order_cup_size"
+        )
+
+        quantity = st.number_input(
+            "Number of cups",
+            min_value=1,
+            max_value=200,
+            value=1,
+            step=1,
+            key="order_quantity"
+        )
+
+    with c2:
+        yakult_qty = st.number_input(
+            "Yakult add-on quantity",
+            min_value=0,
+            max_value=200,
+            value=0,
+            step=1,
+            key="order_yakult_qty"
+        )
+
+        nata_qty = st.number_input(
+            "Fruit jelly nata add-on quantity",
+            min_value=0,
+            max_value=200,
+            value=0,
+            step=1,
+            key="order_nata_qty"
+        )
+
+    st.caption(
+        "Add-on quantities are the number of portions. "
+        "Example: 2 cups with Yakult on both cups = Yakult quantity 2."
+    )
+
+    # Calculate the order total live
+    cup_total = MENU[cup_size] * quantity if cup_size else 0
+    yakult_total = yakult_qty * ADDONS["Yakult"]
+    nata_total = nata_qty * ADDONS["Fruit Jelly Nata"]
+
+    subtotal = cup_total + yakult_total + nata_total
+
+    st.markdown("### Order Summary")
+
+    s1, s2, s3, s4 = st.columns(4)
+
+    s1.metric(
+        "Cup total",
+        peso(cup_total)
+    )
+
+    s2.metric(
+        "Yakult",
+        peso(yakult_total)
+    )
+
+    s3.metric(
+        "Fruit Jelly Nata",
+        peso(nata_total)
+    )
+
+    s4.metric(
+        "Order total",
+        peso(subtotal)
+    )
+
+    st.markdown("#### Payment")
+
+    p1, p2, p3 = st.columns(3)
+
+    with p1:
+        cash_received = st.number_input(
+            "Cash received (₱)",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key="order_cash"
+        )
+
+    with p2:
+        change_returned = st.number_input(
+            "Change actually returned (₱)",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key="order_change"
+        )
+
+    with p3:
+        tip = st.number_input(
+            "Tip (₱)",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            key="order_tip"
+        )
+
+    notes = st.text_input(
+        "Notes (optional)",
+        placeholder="e.g., less ice, customer request",
+        key="order_notes"
+    )
+
+    # Show the remaining change before saving
+    expected_change = max(
+        0.0,
+        cash_received - subtotal - tip
+    )
+
+    st.metric(
+        "Expected change",
+        peso(expected_change)
+    )
+
+    save = st.button(
+        "✅ Save Order",
+        use_container_width=True,
+        key="save_order_button"
+    )
 
     if save:
         errors = []
+
         if not flavor or not cup_size:
             errors.append("Please choose both a flavor and a cup size.")
+
         if subtotal <= 0:
             errors.append("Order total must be greater than zero.")
+
         if cash_received < subtotal + tip:
-            errors.append("Cash received must cover the order total plus any tip entered.")
-        if change_returned > max(0, cash_received - subtotal - tip):
-            errors.append("Change returned cannot be more than the cash remaining after the order and tip.")
-        unclaimed = max(0.0, cash_received - subtotal - tip - change_returned)
+            errors.append(
+                "Cash received must cover the order total plus any tip entered."
+            )
+
+        if change_returned > expected_change:
+            errors.append(
+                "Change returned cannot be more than the expected change."
+            )
+
+        unclaimed = max(
+            0.0,
+            cash_received - subtotal - tip - change_returned
+        )
+
         if errors:
             for err in errors:
                 st.error(err)
+
         else:
-            created = datetime.combine(order_date, now_local().time())
+            created = datetime.combine(
+                order_date,
+                now_local().time()
+            )
+
             with connect() as con:
-                con.execute("""INSERT INTO orders
-                    (created_at,flavor,cup_size,quantity,yakult_qty,nata_qty,subtotal,cash_received,
-                     change_returned,tip,unclaimed_change,notes)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (created.isoformat(sep=" "), flavor, cup_size, int(quantity), int(yakult_qty), int(nata_qty),
-                     float(subtotal), float(cash_received), float(change_returned), float(tip), float(unclaimed), notes))
-            st.success(f"Order saved! Total: {peso(subtotal)} · Unclaimed change: {peso(unclaimed)}")
-            st.caption("The order form clears after saving. Check Records if you need to verify it.")
+                con.execute(
+                    """INSERT INTO orders
+                    (created_at, flavor, cup_size, quantity,
+                     yakult_qty, nata_qty, subtotal, cash_received,
+                     change_returned, tip, unclaimed_change, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        created.isoformat(sep=" "),
+                        flavor,
+                        cup_size,
+                        int(quantity),
+                        int(yakult_qty),
+                        int(nata_qty),
+                        float(subtotal),
+                        float(cash_received),
+                        float(change_returned),
+                        float(tip),
+                        float(unclaimed),
+                        notes
+                    )
+                )
+
+            st.session_state["clear_order_form"] = True
+
+            st.success(
+                f"Order saved! Total: {peso(subtotal)} · "
+                f"Unclaimed change: {peso(unclaimed)}"
+            )
+
+            st.rerun()
+
 
 with tab_dashboard:
     st.subheader("Sales and Cash Overview")
