@@ -76,7 +76,9 @@ def init_db():
             unit TEXT NOT NULL,
             stock_qty REAL NOT NULL DEFAULT 0,
             usage_per_cup REAL NOT NULL DEFAULT 0,
-            reorder_level REAL NOT NULL DEFAULT 10
+            reorder_level REAL NOT NULL DEFAULT 10,
+            starting_stock REAL NOT NULL DEFAULT 0,
+            stock_purchased REAL NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS inventory_movements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +100,20 @@ def init_db():
             }
             for name, level in default_levels.items():
                 con.execute("UPDATE inventory_items SET reorder_level=? WHERE item_name=?", (level, name))
+        # Add editable starting-stock and purchased-quantity fields to existing databases.
+        columns = {row[1] for row in con.execute("PRAGMA table_info(inventory_items)").fetchall()}
+        if "starting_stock" not in columns:
+            con.execute("ALTER TABLE inventory_items ADD COLUMN starting_stock REAL NOT NULL DEFAULT 0")
+            # Preserve the current stock level as the starting count for existing records.
+            con.execute("UPDATE inventory_items SET starting_stock=stock_qty")
+        if "stock_purchased" not in columns:
+            con.execute("ALTER TABLE inventory_items ADD COLUMN stock_purchased REAL NOT NULL DEFAULT 0")
+            # Recover restock totals from existing inventory history where available.
+            con.execute("""UPDATE inventory_items SET stock_purchased = COALESCE((
+                SELECT SUM(quantity_change) FROM inventory_movements
+                WHERE inventory_movements.item_name=inventory_items.item_name
+                  AND movement_type='Restock' AND quantity_change > 0
+            ), 0)""")
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('capital_target','0')")
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('opening_cash','0')")
         default_levels = {
@@ -155,8 +171,10 @@ def change_inventory(item_name, quantity_change, movement_type, notes=""):
     """Update stock and record the change in the inventory history."""
     with connect() as con:
         con.execute(
-            "UPDATE inventory_items SET stock_qty = stock_qty + ? WHERE item_name = ?",
-            (float(quantity_change), item_name)
+            "UPDATE inventory_items SET stock_qty = stock_qty + ?, "
+            "stock_purchased = stock_purchased + CASE WHEN ? = 'Restock' AND ? > 0 THEN ? ELSE 0 END "
+            "WHERE item_name = ?",
+            (float(quantity_change), movement_type, float(quantity_change), float(quantity_change), item_name)
         )
         con.execute(
             "INSERT INTO inventory_movements(moved_at,item_name,quantity_change,movement_type,notes) VALUES(?,?,?,?,?)",
@@ -740,40 +758,70 @@ with tab_inventory:
     visible_items = ["12 oz Cups", "16 oz Cups", "Straws", "Flat Lids"]
     inv_all = load_inventory()
     inv = inv_all[inv_all["item_name"].isin(visible_items)].copy()
-    st.markdown("#### Current stock on hand")
+    st.markdown("#### Stock summary")
+    st.caption("Edit Starting Stock, Stock Purchased, Stock Used, or Restock Level. Remaining Stock is calculated as Starting Stock + Stock Purchased − Stock Used. Enter actual usage manually, especially when a customer does not use a flat lid.")
     if inv.empty:
         st.info("No inventory items found.")
     else:
-        # Editable stock table; item names and units are display-only.
-        stock_editor = inv[["item_name", "stock_qty", "unit"]].copy()
-        stock_editor.columns = ["Item", "Stock on hand", "Unit"]
+        # Derive editable usage from the inventory equation so manual corrections are supported.
+        # Stock Used is editable; Remaining Stock is always calculated from the other quantities.
+        stock_editor = pd.DataFrame({
+            "Item": inv["item_name"].tolist(),
+            "Starting Stock": inv["starting_stock"].astype(float).tolist(),
+            "Stock Purchased": inv["stock_purchased"].astype(float).tolist(),
+            "Stock Used": [max(0.0, float(r["starting_stock"]) + float(r["stock_purchased"]) - float(r["stock_qty"])) for _, r in inv.iterrows()],
+            "Remaining Stock": [max(0.0, float(r["stock_qty"])) for _, r in inv.iterrows()],
+            "Restock Level": inv["reorder_level"].astype(float).tolist(),
+            "Status": ["RESTOCK" if float(r["stock_qty"]) <= float(r["reorder_level"]) else "In stock" for _, r in inv.iterrows()],
+        })
         edited_stock = st.data_editor(
             stock_editor,
             use_container_width=True,
             hide_index=True,
-            disabled=["Item", "Unit"],
+            disabled=["Item", "Remaining Stock", "Status"],
             column_config={
-                "Stock on hand": st.column_config.NumberColumn(
-                    "Stock on hand", min_value=0, step=1, help="Edit this to match the actual quantity you have."
-                )
+                "Starting Stock": st.column_config.NumberColumn("Starting Stock", min_value=0, step=1),
+                "Stock Purchased": st.column_config.NumberColumn("Stock Purchased", min_value=0, step=1, help="Edit to match the actual quantity purchased."),
+                "Stock Used": st.column_config.NumberColumn("Stock Used", min_value=0, step=1, help="Enter the actual number used. This can be corrected manually."),
+                "Remaining Stock": st.column_config.NumberColumn("Remaining Stock", min_value=0, step=1, help="Calculated as Starting Stock + Stock Purchased − Stock Used."),
+                "Restock Level": st.column_config.NumberColumn("Restock Level", min_value=0, step=1),
+                "Status": st.column_config.TextColumn("Status"),
             },
-            key="editable_packaging_stock"
+            key="editable_packaging_stock_summary"
         )
-        if st.button("Save current stock", key="save_packaging_stock"):
+        # Show the formula result immediately in a preview, before saving.
+        preview_stock = edited_stock.copy()
+        preview_stock["Remaining Stock"] = (
+            preview_stock["Starting Stock"].astype(float)
+            + preview_stock["Stock Purchased"].astype(float)
+            - preview_stock["Stock Used"].astype(float)
+        ).clip(lower=0)
+        preview_stock["Status"] = [
+            "RESTOCK" if float(row["Remaining Stock"]) <= float(row["Restock Level"]) else "In stock"
+            for _, row in preview_stock.iterrows()
+        ]
+        st.caption("Remaining Stock preview (updates from your edits):")
+        st.dataframe(preview_stock[["Item", "Remaining Stock", "Status"]], use_container_width=True, hide_index=True)
+
+        if st.button("Save inventory changes", key="save_packaging_stock_summary"):
             with connect() as con:
                 for _, edited_row in edited_stock.iterrows():
                     item_name = edited_row["Item"]
-                    new_qty = max(0.0, float(edited_row["Stock on hand"]))
                     old_row = inv.loc[inv["item_name"] == item_name].iloc[0]
                     old_qty = float(old_row["stock_qty"])
-                    delta = new_qty - old_qty
-                    if delta != 0:
-                        con.execute("UPDATE inventory_items SET stock_qty=? WHERE item_name=?", (new_qty, item_name))
+                    new_start = max(0.0, float(edited_row["Starting Stock"]))
+                    new_purchased = max(0.0, float(edited_row["Stock Purchased"]))
+                    new_used = max(0.0, float(edited_row["Stock Used"]))
+                    new_qty = max(0.0, new_start + new_purchased - new_used)
+                    new_reorder = max(0.0, float(edited_row["Restock Level"]))
+                    con.execute("UPDATE inventory_items SET stock_qty=?, starting_stock=?, stock_purchased=?, reorder_level=? WHERE item_name=?",
+                                (new_qty, new_start, new_purchased, new_reorder, item_name))
+                    if new_qty != old_qty:
                         con.execute(
                             "INSERT INTO inventory_movements(moved_at,item_name,quantity_change,movement_type,notes) VALUES(?,?,?,?,?)",
-                            (now_local().isoformat(sep=" "), item_name, delta, "Stock count adjustment", "Edited current stock on hand")
+                            (now_local().isoformat(sep=" "), item_name, new_qty-old_qty, "Stock count adjustment", "Saved starting stock + purchases - manually entered stock used")
                         )
-            st.success("Current stock counts saved.")
+            st.success("Inventory changes saved.")
             st.rerun()
 
         low_stock = inv[
