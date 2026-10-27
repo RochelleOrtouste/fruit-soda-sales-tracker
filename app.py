@@ -132,7 +132,6 @@ with tab_order:
         with c2:
             yakult_qty = st.number_input("Yakult add-on quantity", min_value=0, max_value=200, value=0, step=1)
             nata_qty = st.number_input("Fruit jelly nata add-on quantity", min_value=0, max_value=200, value=0, step=1)
-            order_time = st.time_input("Order time (Manila)", value=now_local().time())
         st.caption("Add-on quantities are the number of add-on portions. Example: 2 cups with Yakult on both cups = Yakult quantity 2.")
         subtotal = (MENU[cup_size] * quantity if cup_size else 0) + (yakult_qty * ADDONS["Yakult"]) + (nata_qty * ADDONS["Fruit Jelly Nata"])
         st.metric("Order total", peso(subtotal))
@@ -162,7 +161,7 @@ with tab_order:
             for err in errors:
                 st.error(err)
         else:
-            created = now_local().replace(hour=order_time.hour, minute=order_time.minute, second=now_local().second)
+            created = now_local()
             with connect() as con:
                 con.execute("""INSERT INTO orders
                     (created_at,flavor,cup_size,quantity,yakult_qty,nata_qty,subtotal,cash_received,
@@ -222,7 +221,6 @@ with tab_expenses:
     with st.form("expense_form", clear_on_submit=True):
         e1, e2 = st.columns(2)
         with e1:
-            expense_date = st.date_input("Date", value=now_local().date())
             category = st.selectbox("Category", ["Ingredients / supplies", "Packaging", "Ice", "Transport / delivery", "Utilities", "Other"])
         with e2:
             description = st.text_input("Description", placeholder="e.g., 1 box of cups")
@@ -234,7 +232,7 @@ with tab_expenses:
         else:
             with connect() as con:
                 con.execute("INSERT INTO expenses(spent_at,category,description,amount) VALUES(?,?,?,?)",
-                            (datetime.combine(expense_date, now_local().time()).isoformat(sep=" "), category, description.strip(), float(amount)))
+                            (now_local().isoformat(sep=" "), category, description.strip(), float(amount)))
             st.success("Expense saved.")
     st.divider()
     expense_filter_date = st.date_input("View expenses for date", value=now_local().date(), key="expense_filter")
