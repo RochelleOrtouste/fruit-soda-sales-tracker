@@ -744,13 +744,15 @@ with tab_inventory:
     all_12oz_sold = int(all_inventory_orders.loc[all_inventory_orders["cup_size"] == "12 oz", "quantity"].sum()) if not all_inventory_orders.empty else 0
     all_16oz_sold = int(all_inventory_orders.loc[all_inventory_orders["cup_size"] == "16 oz", "quantity"].sum()) if not all_inventory_orders.empty else 0
     all_cups_sold = all_12oz_sold + all_16oz_sold
+    all_yakult_addons = int(all_inventory_orders["yakult_qty"].sum()) if not all_inventory_orders.empty else 0
     all_nata_addons = int(all_inventory_orders["nata_qty"].sum()) if not all_inventory_orders.empty else 0
     st.markdown("#### All-time sales volume")
-    sold_cols = st.columns(4)
+    sold_cols = st.columns(5)
     sold_cols[0].metric("Total Cups Sold", all_cups_sold)
     sold_cols[1].metric("12 oz Cups Sold", all_12oz_sold)
     sold_cols[2].metric("16 oz Cups Sold", all_16oz_sold)
-    sold_cols[3].metric("Fruit Jelly Nata Add-ons", all_nata_addons)
+    sold_cols[3].metric("Yakult Add-ons", all_yakult_addons)
+    sold_cols[4].metric("Fruit Jelly Nata Add-ons", all_nata_addons)
 
     visible_items = ["12 oz Cups", "16 oz Cups", "Straws", "Flat Lids"]
     inv_all = load_inventory()
