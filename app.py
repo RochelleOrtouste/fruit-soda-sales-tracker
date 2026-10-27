@@ -18,6 +18,20 @@ ADDONS = {
 }
 FLAVORS = ["Green Apple", "Strawberry", "Lychee"]
 
+# Inventory quantities are tracked in the units shown. Configure recipe usage
+# (especially Sprite and syrup) in the Inventory & Restocking tab.
+INVENTORY_DEFAULTS = [
+    ("12 oz Cups", "pcs", 0.0, 1.0),
+    ("16 oz Cups", "pcs", 0.0, 1.0),
+    ("Straws", "pcs", 0.0, 1.0),
+    ("Flat Lids", "pcs", 0.0, 1.0),
+    ("Sprite", "ml", 0.0, 0.0),
+    ("Green Apple Syrup", "ml", 0.0, 0.0),
+    ("Strawberry Syrup", "ml", 0.0, 0.0),
+    ("Lychee Syrup", "ml", 0.0, 0.0),
+    ("Fruit Jelly Nata", "portions", 0.0, 1.0),
+]
+
 st.set_page_config(page_title=APP_TITLE, page_icon="🥤", layout="wide")
 
 def now_local():
@@ -57,9 +71,28 @@ def init_db():
             description TEXT NOT NULL,
             amount REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS inventory_items (
+            item_name TEXT PRIMARY KEY,
+            unit TEXT NOT NULL,
+            stock_qty REAL NOT NULL DEFAULT 0,
+            usage_per_cup REAL NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS inventory_movements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            moved_at TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            quantity_change REAL NOT NULL,
+            movement_type TEXT NOT NULL,
+            notes TEXT DEFAULT ''
+        );
         """)
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('capital_target','0')")
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('opening_cash','0')")
+        for item_name, unit, stock_qty, usage_per_cup in INVENTORY_DEFAULTS:
+            con.execute(
+                "INSERT OR IGNORE INTO inventory_items(item_name,unit,stock_qty,usage_per_cup) VALUES(?,?,?,?)",
+                (item_name, unit, stock_qty, usage_per_cup)
+            )
 
 def get_setting(key, default="0"):
     with connect() as con:
@@ -96,9 +129,42 @@ def load_expenses(start=None, end=None):
 def peso(value):
     return f"₱{float(value):,.2f}"
 
+def load_inventory():
+    with connect() as con:
+        rows = con.execute("SELECT * FROM inventory_items ORDER BY rowid").fetchall()
+    return pd.DataFrame([dict(r) for r in rows])
+
+def change_inventory(item_name, quantity_change, movement_type, notes=""):
+    """Update stock and record the change in the inventory history."""
+    with connect() as con:
+        con.execute(
+            "UPDATE inventory_items SET stock_qty = stock_qty + ? WHERE item_name = ?",
+            (float(quantity_change), item_name)
+        )
+        con.execute(
+            "INSERT INTO inventory_movements(moved_at,item_name,quantity_change,movement_type,notes) VALUES(?,?,?,?,?)",
+            (now_local().isoformat(sep=" "), item_name, float(quantity_change), movement_type, notes)
+        )
+
+def deduct_order_inventory(cup_size, quantity, flavor, nata_qty):
+    """Deduct stock for a newly saved order using configured recipe usage."""
+    inventory = load_inventory()
+    item_rows = {row["item_name"]: row for _, row in inventory.iterrows()}
+    deductions = {
+        "12 oz Cups" if cup_size == "12 oz" else "16 oz Cups": float(quantity),
+        "Straws": float(quantity),
+        "Flat Lids": float(quantity),
+        "Sprite": float(quantity) * float(item_rows.get("Sprite", {}).get("usage_per_cup", 0)),
+        f"{flavor} Syrup": float(quantity) * float(item_rows.get(f"{flavor} Syrup", {}).get("usage_per_cup", 0)),
+        "Fruit Jelly Nata": float(nata_qty),
+    }
+    for item_name, amount in deductions.items():
+        if amount > 0 and item_name in item_rows:
+            change_inventory(item_name, -amount, "Order usage", f"Order: {quantity} x {cup_size}, {flavor}; nata add-ons: {nata_qty}")
+
 init_db()
 st.title("🥤 Fruit Soda Sales Tracker")
-st.caption("Simple order recording, daily sales, expenses, tips, unclaimed change, and capital monitoring.")
+st.caption("Order recording, sales, expenses, capital monitoring, and inventory/restocking for ingredients and packaging.")
 
 with st.sidebar:
     st.header("⚙️ Business Settings")
@@ -116,8 +182,8 @@ with st.sidebar:
     st.divider()
     st.caption("Prices are set in the app: 12 oz ₱29, 16 oz ₱39, Yakult ₱15, Fruit Jelly Nata ₱5.")
 
-tab_order, tab_dashboard, tab_expenses, tab_records, tab_backup = st.tabs(
-    ["🧾 New Order", "📊 Dashboard", "🧺 Daily Expenses", "📚 Records", "💾 Backup / Restore"]
+tab_order, tab_dashboard, tab_expenses, tab_inventory, tab_records, tab_backup = st.tabs(
+    ["🧾 New Order", "📊 Dashboard", "🧺 Daily Expenses", "📦 Inventory & Restocking", "📚 Records", "💾 Backup / Restore"]
 )
 
 
@@ -429,6 +495,9 @@ with tab_order:
                     )
                 )
 
+            # Deduct stock for this new order. Existing historical orders are not
+            # retroactively deducted when inventory tracking is first enabled.
+            deduct_order_inventory(cup_size, int(quantity), flavor, int(nata_qty))
             st.session_state["clear_order_form"] = True
 
             st.success(
@@ -618,6 +687,105 @@ with tab_expenses:
                     cur = con.execute("DELETE FROM expenses WHERE id=?", (int(delete_expense_id),))
                 st.success("Expense deleted." if cur.rowcount else "No matching expense ID.")
                 st.rerun()
+
+with tab_inventory:
+    st.subheader("Inventory & Restocking")
+    st.caption("Enter your current stock, record restocks, and configure how much Sprite and syrup each cup uses. New orders automatically deduct stock; older orders are not deducted retroactively.")
+
+    all_inventory_orders = load_orders()
+    all_12oz_sold = int(all_inventory_orders.loc[all_inventory_orders["cup_size"] == "12 oz", "quantity"].sum()) if not all_inventory_orders.empty else 0
+    all_16oz_sold = int(all_inventory_orders.loc[all_inventory_orders["cup_size"] == "16 oz", "quantity"].sum()) if not all_inventory_orders.empty else 0
+    all_cups_sold = all_12oz_sold + all_16oz_sold
+    all_nata_addons = int(all_inventory_orders["nata_qty"].sum()) if not all_inventory_orders.empty else 0
+    st.markdown("#### All-time sales volume")
+    sold_cols = st.columns(4)
+    sold_cols[0].metric("Total Cups Sold", all_cups_sold)
+    sold_cols[1].metric("12 oz Cups Sold", all_12oz_sold)
+    sold_cols[2].metric("16 oz Cups Sold", all_16oz_sold)
+    sold_cols[3].metric("Fruit Jelly Nata Add-ons", all_nata_addons)
+
+    inv = load_inventory()
+    st.markdown("#### Current stock on hand")
+    if inv.empty:
+        st.info("No inventory items found.")
+    else:
+        inv_view = inv[["item_name", "stock_qty", "unit", "usage_per_cup"]].copy()
+        inv_view.columns = ["Item", "Stock on hand", "Unit", "Usage per cup/order"]
+        st.dataframe(inv_view, use_container_width=True, hide_index=True)
+
+        low_stock = inv[inv["stock_qty"].astype(float) <= 10]
+        if not low_stock.empty:
+            st.warning("Low stock alert (10 units or fewer): " + ", ".join(
+                f"{r['item_name']} ({r['stock_qty']:g} {r['unit']})" for _, r in low_stock.iterrows()
+            ) + ". Update this threshold by monitoring your normal pack sizes and usage.")
+
+    st.divider()
+    st.markdown("#### Set starting/current stock")
+    st.caption("Use this to enter the quantity you currently have on hand. This replaces the saved stock count for that item.")
+    with st.form("set_inventory_stock_form"):
+        item_names = inv["item_name"].tolist() if not inv.empty else [x[0] for x in INVENTORY_DEFAULTS]
+        set_item = st.selectbox("Item", item_names, key="set_stock_item")
+        current_item_qty = float(inv.loc[inv["item_name"] == set_item, "stock_qty"].iloc[0]) if not inv.empty else 0.0
+        set_qty = st.number_input("Current quantity on hand", min_value=0.0, value=current_item_qty, step=1.0, key="set_stock_qty")
+        set_stock_submit = st.form_submit_button("Save current stock")
+    if set_stock_submit:
+        old_qty = float(load_inventory().loc[lambda d: d["item_name"] == set_item, "stock_qty"].iloc[0])
+        delta = float(set_qty) - old_qty
+        with connect() as con:
+            con.execute("UPDATE inventory_items SET stock_qty=? WHERE item_name=?", (float(set_qty), set_item))
+            con.execute(
+                "INSERT INTO inventory_movements(moved_at,item_name,quantity_change,movement_type,notes) VALUES(?,?,?,?,?)",
+                (now_local().isoformat(sep=" "), set_item, delta, "Stock count adjustment", "Set current stock count")
+            )
+        st.success(f"Updated {set_item} stock to {set_qty:g}.")
+        st.rerun()
+
+    st.markdown("#### Record a restock")
+    with st.form("restock_inventory_form", clear_on_submit=True):
+        restock_item = st.selectbox("Item to restock", [x[0] for x in INVENTORY_DEFAULTS], key="restock_item")
+        restock_qty = st.number_input("Quantity added", min_value=0.0, value=0.0, step=1.0, key="restock_qty")
+        restock_notes = st.text_input("Notes (optional)", placeholder="e.g., bought 1 bottle / 1 pack")
+        restock_submit = st.form_submit_button("Add restock")
+    if restock_submit:
+        if restock_qty <= 0:
+            st.error("Enter a restock quantity greater than zero.")
+        else:
+            change_inventory(restock_item, float(restock_qty), "Restock", restock_notes.strip())
+            st.success(f"Added {restock_qty:g} {load_inventory().loc[lambda d: d['item_name'] == restock_item, 'unit'].iloc[0]} to {restock_item}.")
+            st.rerun()
+
+    st.markdown("#### Recipe usage per cup")
+    st.caption("Set the amount of Sprite and syrup used for each cup. Use milliliters (ml) for Sprite and syrup. Cups, straws, and lids default to 1 piece per drink. Fruit jelly nata is deducted using the add-on quantity entered on each order.")
+    recipe_items = ["Sprite", "Green Apple Syrup", "Strawberry Syrup", "Lychee Syrup"]
+    inv = load_inventory()
+    with st.form("recipe_usage_form"):
+        recipe_values = {}
+        recipe_cols = st.columns(2)
+        for i, item in enumerate(recipe_items):
+            row = inv.loc[inv["item_name"] == item].iloc[0]
+            with recipe_cols[i % 2]:
+                recipe_values[item] = st.number_input(
+                    f"{item} used per cup (ml)", min_value=0.0,
+                    value=float(row["usage_per_cup"]), step=5.0, key=f"usage_{item}"
+                )
+        recipe_submit = st.form_submit_button("Save recipe usage")
+    if recipe_submit:
+        with connect() as con:
+            for item, usage in recipe_values.items():
+                con.execute("UPDATE inventory_items SET usage_per_cup=? WHERE item_name=?", (float(usage), item))
+        st.success("Recipe usage saved. These settings will apply to new orders.")
+        st.rerun()
+
+    st.markdown("#### Recent inventory movements")
+    with connect() as con:
+        movement_rows = con.execute(
+            "SELECT moved_at, item_name, quantity_change, movement_type, notes FROM inventory_movements ORDER BY id DESC LIMIT 100"
+        ).fetchall()
+    movement_df = pd.DataFrame([dict(r) for r in movement_rows])
+    if movement_df.empty:
+        st.info("No inventory movements recorded yet.")
+    else:
+        st.dataframe(movement_df, use_container_width=True, hide_index=True)
 
 with tab_records:
     st.subheader("Order and Expense Records")
