@@ -138,6 +138,16 @@ with tab_order:
         st.session_state["order_tip"] = 0.0
         st.session_state["order_notes"] = ""
 
+    # Default selections for the clickable controls
+    if "order_flavor" not in st.session_state:
+        st.session_state["order_flavor"] = None
+    if "order_cup_size" not in st.session_state:
+        st.session_state["order_cup_size"] = None
+    if "order_yakult_qty" not in st.session_state:
+        st.session_state["order_yakult_qty"] = 0
+    if "order_nata_qty" not in st.session_state:
+        st.session_state["order_nata_qty"] = 0
+
     c1, c2 = st.columns(2)
 
     with c1:
@@ -148,21 +158,64 @@ with tab_order:
             key="order_date"
         )
 
-        flavor = st.selectbox(
-            "Flavor",
-            FLAVORS,
-            index=None,
-            placeholder="Choose a flavor",
-            key="order_flavor"
-        )
+        st.markdown("### 🍓 Choose Flavor")
+        st.caption("All flavors are available in either cup size.")
 
-        cup_size = st.selectbox(
-            "Cup size",
-            list(MENU.keys()),
-            index=None,
-            placeholder="Choose a cup size",
-            key="order_cup_size"
-        )
+        flavor_cols = st.columns(3)
+        flavor_icons = {
+            "Green Apple": "🍏",
+            "Strawberry": "🍓",
+            "Lychee": "🍈",
+        }
+
+        for i, option in enumerate(FLAVORS):
+            with flavor_cols[i]:
+                selected = st.session_state.get("order_flavor") == option
+                if st.button(
+                    f"{flavor_icons.get(option, '🥤')}\n{option}",
+                    key=f"flavor_choice_{i}",
+                    type="primary" if selected else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state["order_flavor"] = option
+                    st.rerun()
+
+        flavor = st.session_state.get("order_flavor")
+        if flavor:
+            st.caption(f"Selected flavor: {flavor}")
+        else:
+            st.info("Tap a flavor to select it.")
+
+        st.markdown("### 🥤 Choose Cup Size")
+        cup_cols = st.columns(2)
+
+        with cup_cols[0]:
+            selected_12 = st.session_state.get("order_cup_size") == "12 oz"
+            if st.button(
+                "🥤 12 oz\n₱29",
+                key="choose_12oz",
+                type="primary" if selected_12 else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["order_cup_size"] = "12 oz"
+                st.rerun()
+
+        with cup_cols[1]:
+            selected_16 = st.session_state.get("order_cup_size") == "16 oz"
+            if st.button(
+                "🥤 16 oz\n₱39",
+                key="choose_16oz",
+                type="primary" if selected_16 else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["order_cup_size"] = "16 oz"
+                st.rerun()
+
+        cup_size = st.session_state.get("order_cup_size")
+        if cup_size:
+            st.caption(f"Selected cup size: {cup_size} · {peso(MENU[cup_size])}")
+        else:
+            st.info("Tap a cup size to select it.")
 
         quantity = st.number_input(
             "Number of cups",
@@ -174,23 +227,60 @@ with tab_order:
         )
 
     with c2:
-        yakult_qty = st.number_input(
-            "Yakult add-on quantity",
-            min_value=0,
-            max_value=200,
-            value=0,
-            step=1,
-            key="order_yakult_qty"
-        )
+        st.markdown("### ➕ Add-ons")
 
-        nata_qty = st.number_input(
-            "Fruit jelly nata add-on quantity",
-            min_value=0,
-            max_value=200,
-            value=0,
-            step=1,
-            key="order_nata_qty"
-        )
+        # Yakult quantity controls
+        st.markdown("**🥛 Yakult — ₱15 each**")
+        y_minus, y_count, y_plus = st.columns([1, 2, 1])
+        with y_minus:
+            if st.button(
+                "➖",
+                key="yakult_minus",
+                disabled=st.session_state.get("order_yakult_qty", 0) <= 0,
+                use_container_width=True,
+            ):
+                st.session_state["order_yakult_qty"] -= 1
+                st.rerun()
+        with y_count:
+            st.metric("Quantity", st.session_state.get("order_yakult_qty", 0))
+        with y_plus:
+            if st.button(
+                "➕",
+                key="yakult_plus",
+                disabled=st.session_state.get("order_yakult_qty", 0) >= 200,
+                use_container_width=True,
+            ):
+                st.session_state["order_yakult_qty"] += 1
+                st.rerun()
+
+        st.divider()
+
+        # Fruit Jelly Nata quantity controls
+        st.markdown("**🍓 Fruit Jelly Nata — ₱5 each**")
+        n_minus, n_count, n_plus = st.columns([1, 2, 1])
+        with n_minus:
+            if st.button(
+                "➖",
+                key="nata_minus",
+                disabled=st.session_state.get("order_nata_qty", 0) <= 0,
+                use_container_width=True,
+            ):
+                st.session_state["order_nata_qty"] -= 1
+                st.rerun()
+        with n_count:
+            st.metric("Quantity", st.session_state.get("order_nata_qty", 0))
+        with n_plus:
+            if st.button(
+                "➕",
+                key="nata_plus",
+                disabled=st.session_state.get("order_nata_qty", 0) >= 200,
+                use_container_width=True,
+            ):
+                st.session_state["order_nata_qty"] += 1
+                st.rerun()
+
+        yakult_qty = st.session_state.get("order_yakult_qty", 0)
+        nata_qty = st.session_state.get("order_nata_qty", 0)
 
     st.caption(
         "Add-on quantities are the number of portions. "
