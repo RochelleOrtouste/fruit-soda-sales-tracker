@@ -713,6 +713,49 @@ with tab_inventory:
     if inv.empty:
         st.info("No inventory items found.")
     else:
+        st.markdown("#### Quick add / subtract")
+        st.caption("Choose an item and stock field, then add or subtract a quantity. This is useful for quick adjustments without manually replacing the total.")
+        with st.form("quick_inventory_adjustment"):
+            q1, q2, q3, q4 = st.columns([1.3, 1.5, 1, 1])
+            quick_item = q1.selectbox("Item", visible_items, key="quick_adjust_item")
+            quick_field = q2.selectbox("Stock field", ["Starting Stock", "Stock Purchased", "Stock Used"], key="quick_adjust_field")
+            quick_action = q3.selectbox("Action", ["Add (+)", "Subtract (−)"], key="quick_adjust_action")
+            quick_amount = q4.number_input("Quantity", min_value=0, step=1, value=1, key="quick_adjust_amount")
+            apply_adjustment = st.form_submit_button("Apply adjustment")
+        if apply_adjustment:
+            selected_row = inv.loc[inv["item_name"] == quick_item].iloc[0]
+            current_start = float(selected_row["starting_stock"])
+            current_purchased = float(selected_row["stock_purchased"])
+            current_remaining = float(selected_row["stock_qty"])
+            current_used = max(0.0, current_start + current_purchased - current_remaining)
+            sign = 1 if quick_action == "Add (+)" else -1
+            amount = float(quick_amount)
+            if quick_field == "Starting Stock":
+                new_start = max(0.0, current_start + sign * amount)
+                new_purchased = current_purchased
+                new_used = current_used
+            elif quick_field == "Stock Purchased":
+                new_start = current_start
+                new_purchased = max(0.0, current_purchased + sign * amount)
+                new_used = current_used
+            else:
+                new_start = current_start
+                new_purchased = current_purchased
+                new_used = max(0.0, current_used + sign * amount)
+            new_remaining = max(0.0, new_start + new_purchased - new_used)
+            with connect() as con:
+                con.execute(
+                    "UPDATE inventory_items SET starting_stock=?, stock_purchased=?, stock_qty=? WHERE item_name=?",
+                    (new_start, new_purchased, new_remaining, quick_item)
+                )
+                if new_remaining != current_remaining:
+                    con.execute(
+                        "INSERT INTO inventory_movements(moved_at,item_name,quantity_change,movement_type,notes) VALUES(?,?,?,?,?)",
+                        (now_local().isoformat(sep=" "), quick_item, new_remaining-current_remaining, "Quick stock adjustment", f"{quick_action} {amount:g} in {quick_field}")
+                    )
+            st.success(f"Updated {quick_item}: {quick_field} {quick_action.lower()} {amount:g}.")
+            st.rerun()
+
         # Derive editable usage from the inventory equation so manual corrections are supported.
         # Stock Used is editable; Remaining Stock is always calculated from the other quantities.
         stock_editor = pd.DataFrame({
