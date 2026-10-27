@@ -449,6 +449,18 @@ with tab_dashboard:
     tips = float(odf["tip"].sum()) if not odf.empty else 0.0
     unclaimed = float(odf["unclaimed_change"].sum()) if not odf.empty else 0.0
     expenses_total = float(edf["amount"].sum()) if not edf.empty else 0.0
+    
+    # Number of cups sold for the selected date
+    cups_12oz = int(
+        odf.loc[odf["cup_size"] == "12 oz", "quantity"].sum()
+    ) if not odf.empty else 0
+
+    cups_16oz = int(
+        odf.loc[odf["cup_size"] == "16 oz", "quantity"].sum()
+    ) if not odf.empty else 0
+
+    total_cups_sold = cups_12oz + cups_16oz
+
     order_cash_in = float((odf["cash_received"] - odf["change_returned"]).sum()) if not odf.empty else 0.0
     all_orders = load_orders()
     all_expenses = load_expenses()
@@ -467,6 +479,14 @@ with tab_dashboard:
     metrics[1].metric("Tips today", peso(tips))
     metrics[2].metric("Unclaimed change today", peso(unclaimed))
     metrics[3].metric("Expenses today", peso(expenses_total))
+    
+    st.markdown("#### 🥤 Cups Sold")
+
+    cup_metrics = st.columns(3)
+    cup_metrics[0].metric("12 oz Cups Sold", cups_12oz)
+    cup_metrics[1].metric("16 oz Cups Sold", cups_16oz)
+    cup_metrics[2].metric("Total Cups Sold", total_cups_sold)
+
     st.markdown("#### Daily cash summary")
     st.write(f"**Cash received less change returned today:** {peso(order_cash_in)}")
     st.write(f"**Cash generated today after expenses** (cash received less change returned − expenses): {peso(order_cash_in - expenses_total)}")
