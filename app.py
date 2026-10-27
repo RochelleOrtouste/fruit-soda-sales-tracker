@@ -464,15 +464,19 @@ with tab_dashboard:
     order_cash_in = float((odf["cash_received"] - odf["change_returned"]).sum()) if not odf.empty else 0.0
     all_orders = load_orders()
     all_expenses = load_expenses()
-    total_sales = float(all_orders["subtotal"].sum()) if not all_orders.empty else 0.0
-    total_tips = float(all_orders["tip"].sum()) if not all_orders.empty else 0.0
-    total_unclaimed = float(all_orders["unclaimed_change"].sum()) if not all_orders.empty else 0.0
     total_expenses = float(all_expenses["amount"].sum()) if not all_expenses.empty else 0.0
     opening_cash = float(get_setting("opening_cash", "0"))
-    current_cash = opening_cash + float((all_orders["cash_received"] - all_orders["change_returned"]).sum() if not all_orders.empty else 0) - total_expenses
+    # Estimated cash currently available: opening cash + customer cash retained - recorded expenses.
+    # This is a cash balance, not total sales or profit.
+    customer_cash_retained = float(
+        (all_orders["cash_received"] - all_orders["change_returned"]).sum()
+    ) if not all_orders.empty else 0.0
+    current_cash = opening_cash + customer_cash_retained - total_expenses
     target = float(get_setting("capital_target", "0"))
-    net_toward_capital = total_sales + total_tips + total_unclaimed - total_expenses
-    remaining = max(0.0, target - net_toward_capital)
+    # Capital recovery is measured against the cash currently available.
+    # Make sure the opening cash setting reflects only cash already on hand before tracking began.
+    remaining = max(0.0, target - max(0.0, current_cash))
+    capital_recovered = min(target, max(0.0, current_cash))
 
     metrics = st.columns(4)
     metrics[0].metric("Sales today", peso(sales))
@@ -495,12 +499,12 @@ with tab_dashboard:
     st.subheader("Overall Capital Monitoring")
     m1, m2, m3 = st.columns(3)
     m1.metric("Current estimated cash on hand", peso(current_cash))
-    m2.metric("Net amount toward capital recovery", peso(net_toward_capital))
+    m2.metric("Cash counted toward capital recovery", peso(capital_recovered))
     m3.metric("Capital still to recover", peso(remaining))
     if target > 0:
-        progress = min(1.0, max(0.0, net_toward_capital / target))
-        st.progress(progress, text=f"{progress*100:.1f}% of capital target")
-    st.warning("Capital recovery is an estimate based on total sales + tips + unclaimed change − recorded expenses. For a more accurate profit report, record ingredient/restocking costs and other business expenses consistently.")
+        progress = min(1.0, max(0.0, capital_recovered / target))
+        st.progress(progress, text=f"{progress*100:.1f}% of initial capital")
+    st.caption("Capital recovery here compares your initial capital target with estimated cash currently available. Record all business expenses, including restocking and supplies, and ensure opening cash is entered only once. Cash on hand is not the same as profit or total sales.")
 
 with tab_expenses:
     st.subheader("Record an Expense")
@@ -604,7 +608,7 @@ with tab_backup:
     - **Tips:** recorded separately from sales.
     - **Unclaimed change:** remaining change not returned to the customer; not counted as sales.
     - **Current estimated cash:** opening cash + (cash received − change returned for all orders) − recorded expenses.
-    - **Capital still to recover:** max(0, capital target − (sales + tips + unclaimed change − expenses)).
+    - **Capital still to recover:** max(0, initial capital target − estimated current cash on hand).
     """)
 
 st.caption("Time zone: Asia/Manila (Philippines). Keep a backup of your records regularly.")
