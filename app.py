@@ -514,6 +514,55 @@ with tab_dashboard:
     st.write(f"**Estimated cash on hand = {peso(opening_cash)} + {peso(customer_cash_retained)} − {peso(total_expenses)} = {peso(current_cash)}**")
     st.caption("Customer cash retained already includes the money collected from sales, tips, and any unclaimed change. Total sales are shown separately for transparency and must not be added to customer cash retained again.")
 
+    # Show all-time expense rows so incorrect entries (such as initial capital
+    # accidentally recorded as an expense) can be identified and corrected.
+    st.markdown("#### Review all recorded expenses")
+    if all_expenses.empty:
+        st.info("No expenses have been recorded.")
+    else:
+        expense_display = all_expenses[["id", "spent_at", "category", "description", "amount"]].copy()
+        expense_display["amount"] = expense_display["amount"].apply(peso)
+        st.dataframe(expense_display, use_container_width=True, hide_index=True)
+
+        # Initial capital is funding, not an operating expense. Flag a likely
+        # data-entry mistake, but never delete/exclude a record automatically.
+        capital_like_rows = all_expenses[
+            all_expenses["amount"].astype(float).round(2) == round(target, 2)
+        ] if target > 0 else pd.DataFrame()
+        if not capital_like_rows.empty:
+            st.warning(
+                f"{len(capital_like_rows)} expense record(s) have an amount equal to your initial capital "
+                f"({peso(target)}). If one of these records is your starting capital rather than an actual "
+                "purchase, delete that incorrect expense record below. Initial capital should not be recorded as an expense."
+            )
+
+        with st.form("delete_all_time_expense_form"):
+            expense_ids = all_expenses["id"].astype(int).tolist()
+            selected_expense_id = st.selectbox(
+                "Select an expense record to delete",
+                options=expense_ids,
+                format_func=lambda expense_id: (
+                    f"ID {expense_id} — "
+                    f"{all_expenses.loc[all_expenses['id'] == expense_id, 'description'].iloc[0]} — "
+                    f"{peso(all_expenses.loc[all_expenses['id'] == expense_id, 'amount'].iloc[0])}"
+                ),
+            )
+            confirm_expense_delete = st.checkbox(
+                "I confirm that I want to permanently delete this expense record."
+            )
+            delete_expense_submit = st.form_submit_button("Delete selected expense record")
+        if delete_expense_submit:
+            if not confirm_expense_delete:
+                st.error("Please confirm before deleting the expense record.")
+            else:
+                with connect() as con:
+                    cur = con.execute("DELETE FROM expenses WHERE id = ?", (int(selected_expense_id),))
+                if cur.rowcount:
+                    st.success(f"Expense record ID {selected_expense_id} deleted.")
+                    st.rerun()
+                else:
+                    st.error("That expense record could not be found.")
+
     st.markdown("#### Capital recovery")
     m1, m2, m3 = st.columns(3)
     m1.metric("Initial capital", peso(target))
@@ -625,7 +674,8 @@ with tab_backup:
     - **Sales:** cup price × quantity + add-on portions.
     - **Tips:** recorded separately from sales.
     - **Unclaimed change:** remaining change not returned to the customer; not counted as sales.
-    - **Current estimated cash:** opening cash + (cash received − change returned for all orders) − recorded expenses.
+    - **Current estimated cash:** opening cash + (cash received − change returned for all orders) − actual recorded business expenses.
+    - **Important:** initial capital is funding, not a business expense. Do not enter the initial capital amount in Daily Expenses.
     - **Capital still to recover:** max(0, initial capital target − estimated current cash on hand).
     """)
 
