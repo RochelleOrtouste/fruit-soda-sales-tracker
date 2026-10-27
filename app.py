@@ -25,7 +25,6 @@ INVENTORY_DEFAULTS = [
     ("16 oz Cups", "pcs", 0.0, 1.0),
     ("Straws", "pcs", 0.0, 1.0),
     ("Flat Lids", "pcs", 0.0, 1.0),
-    ("Sprite", "ml", 0.0, 0.0),
     ("Green Apple Syrup", "ml", 0.0, 0.0),
     ("Strawberry Syrup", "ml", 0.0, 0.0),
     ("Lychee Syrup", "ml", 0.0, 0.0),
@@ -95,7 +94,7 @@ def init_db():
             con.execute("ALTER TABLE inventory_items ADD COLUMN reorder_level REAL NOT NULL DEFAULT 10")
             default_levels = {
                 "12 oz Cups": 10, "16 oz Cups": 10, "Straws": 20, "Flat Lids": 10,
-                "Sprite": 1000, "Green Apple Syrup": 250, "Strawberry Syrup": 250,
+                "Green Apple Syrup": 250, "Strawberry Syrup": 250,
                 "Lychee Syrup": 250, "Fruit Jelly Nata": 10,
             }
             for name, level in default_levels.items():
@@ -118,7 +117,7 @@ def init_db():
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('opening_cash','0')")
         default_levels = {
             "12 oz Cups": 10, "16 oz Cups": 10, "Straws": 20, "Flat Lids": 10,
-            "Sprite": 1000, "Green Apple Syrup": 250, "Strawberry Syrup": 250,
+            "Green Apple Syrup": 250, "Strawberry Syrup": 250,
             "Lychee Syrup": 250, "Fruit Jelly Nata": 10,
         }
         for item_name, unit, stock_qty, usage_per_cup in INVENTORY_DEFAULTS:
@@ -189,7 +188,6 @@ def deduct_order_inventory(cup_size, quantity, flavor, nata_qty):
         "12 oz Cups" if cup_size == "12 oz" else "16 oz Cups": float(quantity),
         "Straws": float(quantity),
         "Flat Lids": float(quantity),
-        "Sprite": float(quantity) * float(item_rows.get("Sprite", {}).get("usage_per_cup", 0)),
         f"{flavor} Syrup": float(quantity) * float(item_rows.get(f"{flavor} Syrup", {}).get("usage_per_cup", 0)),
         "Fruit Jelly Nata": float(nata_qty),
     }
@@ -204,9 +202,8 @@ st.caption("Order recording, sales, expenses, capital monitoring, and inventory/
 # Show a persistent in-app warning on every page while the app is open.
 _current_inventory = load_inventory()
 if not _current_inventory.empty:
-    # Alerts are limited to packaging and Sprite; syrup and nata remain visible
-    # in the inventory table but are intentionally excluded from restock alerts.
-    _alert_items = ["12 oz Cups", "16 oz Cups", "Straws", "Flat Lids", "Sprite"]
+    # Restock alerts are only for packaging; Sprite is not tracked by this app.
+    _alert_items = ["12 oz Cups", "16 oz Cups", "Straws", "Flat Lids"]
     _items_to_restock = _current_inventory[
         _current_inventory["item_name"].isin(_alert_items)
         & (_current_inventory["stock_qty"].astype(float) <= _current_inventory["reorder_level"].astype(float))
