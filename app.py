@@ -432,52 +432,16 @@ with tab_order:
         peso(subtotal)
     )
 
-    st.markdown("#### Payment")
-
-    p1, p2, p3 = st.columns(3)
-
-    with p1:
-        cash_received = st.number_input(
-            "Cash received (₱)",
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key="order_cash"
-        )
-
-    with p2:
-        change_returned = st.number_input(
-            "Change actually returned (₱)",
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key="order_change"
-        )
-
-    with p3:
-        tip = st.number_input(
-            "Tip (₱)",
-            min_value=0.0,
-            value=0.0,
-            step=1.0,
-            key="order_tip"
-        )
+    # Payment details are simplified: record the order total as collected.
+    # Cash received, change returned, and tips are not entered separately.
+    cash_received = float(subtotal)
+    change_returned = 0.0
+    tip = 0.0
 
     notes = st.text_input(
         "Notes (optional)",
         placeholder="e.g., less ice, customer request",
         key="order_notes"
-    )
-
-    # Show the remaining change before saving
-    expected_change = max(
-        0.0,
-        cash_received - subtotal - tip
-    )
-
-    st.metric(
-        "Expected change",
-        peso(expected_change)
     )
 
     save = st.button(
@@ -495,20 +459,8 @@ with tab_order:
         if subtotal <= 0:
             errors.append("Order total must be greater than zero.")
 
-        if cash_received < subtotal + tip:
-            errors.append(
-                "Cash received must cover the order total plus any tip entered."
-            )
-
-        if change_returned > expected_change:
-            errors.append(
-                "Change returned cannot be more than the expected change."
-            )
-
-        unclaimed = max(
-            0.0,
-            cash_received - subtotal - tip - change_returned
-        )
+        # Payment is recorded as the order total; no separate cash/change/tip fields.
+        unclaimed = 0.0
 
         if errors:
             for err in errors:
@@ -548,10 +500,7 @@ with tab_order:
             deduct_order_inventory(cup_size, int(quantity), flavor, int(nata_qty))
             st.session_state["clear_order_form"] = True
 
-            st.success(
-                f"Order saved! Total: {peso(subtotal)} · "
-                f"Unclaimed change: {peso(unclaimed)}"
-            )
+            st.success(f"Order saved! Total: {peso(subtotal)}")
 
             st.rerun()
 
