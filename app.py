@@ -18,17 +18,12 @@ ADDONS = {
 }
 FLAVORS = ["Green Apple", "Strawberry", "Lychee"]
 
-# Inventory quantities are tracked in the units shown. Configure recipe usage
-# (especially Sprite and syrup) in the Inventory & Restocking tab.
+# Only packaging supplies are monitored in inventory.
 INVENTORY_DEFAULTS = [
     ("12 oz Cups", "pcs", 0.0, 1.0),
     ("16 oz Cups", "pcs", 0.0, 1.0),
     ("Straws", "pcs", 0.0, 1.0),
     ("Flat Lids", "pcs", 0.0, 1.0),
-    ("Green Apple Syrup", "ml", 0.0, 0.0),
-    ("Strawberry Syrup", "ml", 0.0, 0.0),
-    ("Lychee Syrup", "ml", 0.0, 0.0),
-    ("Fruit Jelly Nata", "portions", 0.0, 1.0),
 ]
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🥤", layout="wide")
@@ -94,8 +89,6 @@ def init_db():
             con.execute("ALTER TABLE inventory_items ADD COLUMN reorder_level REAL NOT NULL DEFAULT 10")
             default_levels = {
                 "12 oz Cups": 10, "16 oz Cups": 10, "Straws": 20, "Flat Lids": 10,
-                "Green Apple Syrup": 250, "Strawberry Syrup": 250,
-                "Lychee Syrup": 250, "Fruit Jelly Nata": 10,
             }
             for name, level in default_levels.items():
                 con.execute("UPDATE inventory_items SET reorder_level=? WHERE item_name=?", (level, name))
@@ -117,8 +110,6 @@ def init_db():
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('opening_cash','0')")
         default_levels = {
             "12 oz Cups": 10, "16 oz Cups": 10, "Straws": 20, "Flat Lids": 10,
-            "Green Apple Syrup": 250, "Strawberry Syrup": 250,
-            "Lychee Syrup": 250, "Fruit Jelly Nata": 10,
         }
         for item_name, unit, stock_qty, usage_per_cup in INVENTORY_DEFAULTS:
             con.execute(
