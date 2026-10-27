@@ -870,16 +870,6 @@ with tab_inventory:
             st.success(f"Added {restock_qty:g} {load_inventory().loc[lambda d: d['item_name'] == restock_item, 'unit'].iloc[0]} to {restock_item}.")
             st.rerun()
 
-    st.markdown("#### Recent inventory movements")
-    with connect() as con:
-        movement_rows = con.execute(
-            "SELECT moved_at, item_name, quantity_change, movement_type, notes FROM inventory_movements WHERE item_name IN ('12 oz Cups','16 oz Cups','Straws','Flat Lids') ORDER BY id DESC LIMIT 100"
-        ).fetchall()
-    movement_df = pd.DataFrame([dict(r) for r in movement_rows])
-    if movement_df.empty:
-        st.info("No inventory movements recorded yet.")
-    else:
-        st.dataframe(movement_df, use_container_width=True, hide_index=True)
 
 with tab_records:
     st.subheader("Order and Expense Records")
