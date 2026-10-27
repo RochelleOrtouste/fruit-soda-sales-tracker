@@ -186,8 +186,12 @@ st.caption("Order recording, sales, expenses, capital monitoring, and inventory/
 # Show a persistent in-app warning on every page while the app is open.
 _current_inventory = load_inventory()
 if not _current_inventory.empty:
+    # Alerts are limited to packaging and Sprite; syrup and nata remain visible
+    # in the inventory table but are intentionally excluded from restock alerts.
+    _alert_items = ["12 oz Cups", "16 oz Cups", "Straws", "Flat Lids", "Sprite"]
     _items_to_restock = _current_inventory[
-        _current_inventory["stock_qty"].astype(float) <= _current_inventory["reorder_level"].astype(float)
+        _current_inventory["item_name"].isin(_alert_items)
+        & (_current_inventory["stock_qty"].astype(float) <= _current_inventory["reorder_level"].astype(float))
     ]
     if not _items_to_restock.empty:
         st.warning("🛒 RESTOCK REMINDER: " + "; ".join(
@@ -719,7 +723,7 @@ with tab_expenses:
 
 with tab_inventory:
     st.subheader("Inventory & Restocking")
-    st.caption("Enter your current stock, record restocks, and configure how much Sprite and syrup each cup uses. New orders automatically deduct stock; older orders are not deducted retroactively.")
+    st.caption("Manage the current stock of cups, straws, and flat lids. You can edit the stock count whenever the actual quantity differs—for example, when a customer does not use a flat lid.")
 
     all_inventory_orders = load_orders()
     all_12oz_sold = int(all_inventory_orders.loc[all_inventory_orders["cup_size"] == "12 oz", "quantity"].sum()) if not all_inventory_orders.empty else 0
@@ -733,28 +737,59 @@ with tab_inventory:
     sold_cols[2].metric("16 oz Cups Sold", all_16oz_sold)
     sold_cols[3].metric("Fruit Jelly Nata Add-ons", all_nata_addons)
 
-    inv = load_inventory()
+    visible_items = ["12 oz Cups", "16 oz Cups", "Straws", "Flat Lids"]
+    inv_all = load_inventory()
+    inv = inv_all[inv_all["item_name"].isin(visible_items)].copy()
     st.markdown("#### Current stock on hand")
     if inv.empty:
         st.info("No inventory items found.")
     else:
-        inv_view = inv[["item_name", "stock_qty", "unit", "reorder_level", "usage_per_cup"]].copy()
-        inv_view.columns = ["Item", "Stock on hand", "Unit", "Restock warning at", "Usage per cup/order"]
-        st.dataframe(inv_view, use_container_width=True, hide_index=True)
+        # Editable stock table; item names and units are display-only.
+        stock_editor = inv[["item_name", "stock_qty", "unit"]].copy()
+        stock_editor.columns = ["Item", "Stock on hand", "Unit"]
+        edited_stock = st.data_editor(
+            stock_editor,
+            use_container_width=True,
+            hide_index=True,
+            disabled=["Item", "Unit"],
+            column_config={
+                "Stock on hand": st.column_config.NumberColumn(
+                    "Stock on hand", min_value=0, step=1, help="Edit this to match the actual quantity you have."
+                )
+            },
+            key="editable_packaging_stock"
+        )
+        if st.button("Save current stock", key="save_packaging_stock"):
+            with connect() as con:
+                for _, edited_row in edited_stock.iterrows():
+                    item_name = edited_row["Item"]
+                    new_qty = max(0.0, float(edited_row["Stock on hand"]))
+                    old_row = inv.loc[inv["item_name"] == item_name].iloc[0]
+                    old_qty = float(old_row["stock_qty"])
+                    delta = new_qty - old_qty
+                    if delta != 0:
+                        con.execute("UPDATE inventory_items SET stock_qty=? WHERE item_name=?", (new_qty, item_name))
+                        con.execute(
+                            "INSERT INTO inventory_movements(moved_at,item_name,quantity_change,movement_type,notes) VALUES(?,?,?,?,?)",
+                            (now_local().isoformat(sep=" "), item_name, delta, "Stock count adjustment", "Edited current stock on hand")
+                        )
+            st.success("Current stock counts saved.")
+            st.rerun()
 
-        low_stock = inv[inv["stock_qty"].astype(float) <= inv["reorder_level"].astype(float)]
+        low_stock = inv[
+            (inv["stock_qty"].astype(float) <= inv["reorder_level"].astype(float))
+        ]
         if not low_stock.empty:
             st.warning("🛒 RESTOCK WARNING — These items are at or below their restock threshold: " + "; ".join(
                 f"{r['item_name']}: {r['stock_qty']:g} {r['unit']} left (warning at {r['reorder_level']:g} {r['unit']})"
                 for _, r in low_stock.iterrows()
             ))
         else:
-            st.success("Inventory looks good — no items have reached their restock thresholds.")
+            st.success("Cups, straws, and flat lids are above their restock thresholds.")
 
     st.divider()
     st.markdown("#### Set restock warning levels")
-    st.caption("Choose the minimum stock level that should trigger a warning. These are starter values; adjust them to match your bottle and pack sizes.")
-    inv = load_inventory()
+    st.caption("Choose the minimum quantity that should trigger a warning.")
     with st.form("reorder_levels_form"):
         reorder_values = {}
         reorder_cols = st.columns(2)
@@ -773,31 +808,11 @@ with tab_inventory:
         st.success("Restock warning levels saved.")
         st.rerun()
 
-    st.markdown("#### Set starting/current stock")
-    st.caption("Use this to enter the quantity you currently have on hand. This replaces the saved stock count for that item.")
-    with st.form("set_inventory_stock_form"):
-        item_names = inv["item_name"].tolist() if not inv.empty else [x[0] for x in INVENTORY_DEFAULTS]
-        set_item = st.selectbox("Item", item_names, key="set_stock_item")
-        current_item_qty = float(inv.loc[inv["item_name"] == set_item, "stock_qty"].iloc[0]) if not inv.empty else 0.0
-        set_qty = st.number_input("Current quantity on hand", min_value=0.0, value=current_item_qty, step=1.0, key="set_stock_qty")
-        set_stock_submit = st.form_submit_button("Save current stock")
-    if set_stock_submit:
-        old_qty = float(load_inventory().loc[lambda d: d["item_name"] == set_item, "stock_qty"].iloc[0])
-        delta = float(set_qty) - old_qty
-        with connect() as con:
-            con.execute("UPDATE inventory_items SET stock_qty=? WHERE item_name=?", (float(set_qty), set_item))
-            con.execute(
-                "INSERT INTO inventory_movements(moved_at,item_name,quantity_change,movement_type,notes) VALUES(?,?,?,?,?)",
-                (now_local().isoformat(sep=" "), set_item, delta, "Stock count adjustment", "Set current stock count")
-            )
-        st.success(f"Updated {set_item} stock to {set_qty:g}.")
-        st.rerun()
-
     st.markdown("#### Record a restock")
     with st.form("restock_inventory_form", clear_on_submit=True):
-        restock_item = st.selectbox("Item to restock", [x[0] for x in INVENTORY_DEFAULTS], key="restock_item")
+        restock_item = st.selectbox("Item to restock", visible_items, key="restock_item")
         restock_qty = st.number_input("Quantity added", min_value=0.0, value=0.0, step=1.0, key="restock_qty")
-        restock_notes = st.text_input("Notes (optional)", placeholder="e.g., bought 1 bottle / 1 pack")
+        restock_notes = st.text_input("Notes (optional)", placeholder="e.g., bought 1 pack")
         restock_submit = st.form_submit_button("Add restock")
     if restock_submit:
         if restock_qty <= 0:
@@ -807,32 +822,10 @@ with tab_inventory:
             st.success(f"Added {restock_qty:g} {load_inventory().loc[lambda d: d['item_name'] == restock_item, 'unit'].iloc[0]} to {restock_item}.")
             st.rerun()
 
-    st.markdown("#### Recipe usage per cup")
-    st.caption("Set the amount of Sprite and syrup used for each cup. Use milliliters (ml) for Sprite and syrup. Cups, straws, and lids default to 1 piece per drink. Fruit jelly nata is deducted using the add-on quantity entered on each order.")
-    recipe_items = ["Sprite", "Green Apple Syrup", "Strawberry Syrup", "Lychee Syrup"]
-    inv = load_inventory()
-    with st.form("recipe_usage_form"):
-        recipe_values = {}
-        recipe_cols = st.columns(2)
-        for i, item in enumerate(recipe_items):
-            row = inv.loc[inv["item_name"] == item].iloc[0]
-            with recipe_cols[i % 2]:
-                recipe_values[item] = st.number_input(
-                    f"{item} used per cup (ml)", min_value=0.0,
-                    value=float(row["usage_per_cup"]), step=5.0, key=f"usage_{item}"
-                )
-        recipe_submit = st.form_submit_button("Save recipe usage")
-    if recipe_submit:
-        with connect() as con:
-            for item, usage in recipe_values.items():
-                con.execute("UPDATE inventory_items SET usage_per_cup=? WHERE item_name=?", (float(usage), item))
-        st.success("Recipe usage saved. These settings will apply to new orders.")
-        st.rerun()
-
     st.markdown("#### Recent inventory movements")
     with connect() as con:
         movement_rows = con.execute(
-            "SELECT moved_at, item_name, quantity_change, movement_type, notes FROM inventory_movements ORDER BY id DESC LIMIT 100"
+            "SELECT moved_at, item_name, quantity_change, movement_type, notes FROM inventory_movements WHERE item_name IN ('12 oz Cups','16 oz Cups','Straws','Flat Lids') ORDER BY id DESC LIMIT 100"
         ).fetchall()
     movement_df = pd.DataFrame([dict(r) for r in movement_rows])
     if movement_df.empty:
