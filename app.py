@@ -75,7 +75,8 @@ def init_db():
             item_name TEXT PRIMARY KEY,
             unit TEXT NOT NULL,
             stock_qty REAL NOT NULL DEFAULT 0,
-            usage_per_cup REAL NOT NULL DEFAULT 0
+            usage_per_cup REAL NOT NULL DEFAULT 0,
+            reorder_level REAL NOT NULL DEFAULT 10
         );
         CREATE TABLE IF NOT EXISTS inventory_movements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,12 +87,28 @@ def init_db():
             notes TEXT DEFAULT ''
         );
         """)
+        # Migrate older databases safely by adding per-item restock thresholds.
+        columns = {row[1] for row in con.execute("PRAGMA table_info(inventory_items)").fetchall()}
+        if "reorder_level" not in columns:
+            con.execute("ALTER TABLE inventory_items ADD COLUMN reorder_level REAL NOT NULL DEFAULT 10")
+            default_levels = {
+                "12 oz Cups": 10, "16 oz Cups": 10, "Straws": 20, "Flat Lids": 10,
+                "Sprite": 1000, "Green Apple Syrup": 250, "Strawberry Syrup": 250,
+                "Lychee Syrup": 250, "Fruit Jelly Nata": 10,
+            }
+            for name, level in default_levels.items():
+                con.execute("UPDATE inventory_items SET reorder_level=? WHERE item_name=?", (level, name))
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('capital_target','0')")
         con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('opening_cash','0')")
+        default_levels = {
+            "12 oz Cups": 10, "16 oz Cups": 10, "Straws": 20, "Flat Lids": 10,
+            "Sprite": 1000, "Green Apple Syrup": 250, "Strawberry Syrup": 250,
+            "Lychee Syrup": 250, "Fruit Jelly Nata": 10,
+        }
         for item_name, unit, stock_qty, usage_per_cup in INVENTORY_DEFAULTS:
             con.execute(
-                "INSERT OR IGNORE INTO inventory_items(item_name,unit,stock_qty,usage_per_cup) VALUES(?,?,?,?)",
-                (item_name, unit, stock_qty, usage_per_cup)
+                "INSERT OR IGNORE INTO inventory_items(item_name,unit,stock_qty,usage_per_cup,reorder_level) VALUES(?,?,?,?,?)",
+                (item_name, unit, stock_qty, usage_per_cup, default_levels.get(item_name, 10))
             )
 
 def get_setting(key, default="0"):
@@ -165,6 +182,18 @@ def deduct_order_inventory(cup_size, quantity, flavor, nata_qty):
 init_db()
 st.title("🥤 Fruit Soda Sales Tracker")
 st.caption("Order recording, sales, expenses, capital monitoring, and inventory/restocking for ingredients and packaging.")
+
+# Show a persistent in-app warning on every page while the app is open.
+_current_inventory = load_inventory()
+if not _current_inventory.empty:
+    _items_to_restock = _current_inventory[
+        _current_inventory["stock_qty"].astype(float) <= _current_inventory["reorder_level"].astype(float)
+    ]
+    if not _items_to_restock.empty:
+        st.warning("🛒 RESTOCK REMINDER: " + "; ".join(
+            f"{r['item_name']} — {r['stock_qty']:g} {r['unit']} left (restock warning at {r['reorder_level']:g})"
+            for _, r in _items_to_restock.iterrows()
+        ) + ". Open Inventory & Restocking to review.")
 
 with st.sidebar:
     st.header("⚙️ Business Settings")
@@ -709,17 +738,41 @@ with tab_inventory:
     if inv.empty:
         st.info("No inventory items found.")
     else:
-        inv_view = inv[["item_name", "stock_qty", "unit", "usage_per_cup"]].copy()
-        inv_view.columns = ["Item", "Stock on hand", "Unit", "Usage per cup/order"]
+        inv_view = inv[["item_name", "stock_qty", "unit", "reorder_level", "usage_per_cup"]].copy()
+        inv_view.columns = ["Item", "Stock on hand", "Unit", "Restock warning at", "Usage per cup/order"]
         st.dataframe(inv_view, use_container_width=True, hide_index=True)
 
-        low_stock = inv[inv["stock_qty"].astype(float) <= 10]
+        low_stock = inv[inv["stock_qty"].astype(float) <= inv["reorder_level"].astype(float)]
         if not low_stock.empty:
-            st.warning("Low stock alert (10 units or fewer): " + ", ".join(
-                f"{r['item_name']} ({r['stock_qty']:g} {r['unit']})" for _, r in low_stock.iterrows()
-            ) + ". Update this threshold by monitoring your normal pack sizes and usage.")
+            st.warning("🛒 RESTOCK WARNING — These items are at or below their restock threshold: " + "; ".join(
+                f"{r['item_name']}: {r['stock_qty']:g} {r['unit']} left (warning at {r['reorder_level']:g} {r['unit']})"
+                for _, r in low_stock.iterrows()
+            ))
+        else:
+            st.success("Inventory looks good — no items have reached their restock thresholds.")
 
     st.divider()
+    st.markdown("#### Set restock warning levels")
+    st.caption("Choose the minimum stock level that should trigger a warning. These are starter values; adjust them to match your bottle and pack sizes.")
+    inv = load_inventory()
+    with st.form("reorder_levels_form"):
+        reorder_values = {}
+        reorder_cols = st.columns(2)
+        for i, (_, row) in enumerate(inv.iterrows()):
+            with reorder_cols[i % 2]:
+                reorder_values[row["item_name"]] = st.number_input(
+                    f"{row['item_name']} warning level ({row['unit']})",
+                    min_value=0.0, value=float(row["reorder_level"]), step=1.0,
+                    key=f"reorder_level_{row['item_name']}"
+                )
+        reorder_submit = st.form_submit_button("Save restock warning levels")
+    if reorder_submit:
+        with connect() as con:
+            for item_name, level in reorder_values.items():
+                con.execute("UPDATE inventory_items SET reorder_level=? WHERE item_name=?", (float(level), item_name))
+        st.success("Restock warning levels saved.")
+        st.rerun()
+
     st.markdown("#### Set starting/current stock")
     st.caption("Use this to enter the quantity you currently have on hand. This replaces the saved stock count for that item.")
     with st.form("set_inventory_stock_form"):
