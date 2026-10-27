@@ -476,10 +476,11 @@ with tab_dashboard:
     ) if not all_orders.empty else 0.0
     current_cash = opening_cash + customer_cash_retained - total_expenses
     target = float(get_setting("capital_target", "0"))
-    # Capital recovery is measured against the cash currently available.
-    # Make sure the opening cash setting reflects only cash already on hand before tracking began.
-    remaining = max(0.0, target - max(0.0, current_cash))
-    capital_recovered = min(target, max(0.0, current_cash))
+    # Capital still to recover is the initial capital minus current cash on hand.
+    # Cash on hand cannot be negative for purposes of this recovery estimate.
+    cash_available_for_recovery = max(0.0, current_cash)
+    capital_recovered = min(target, cash_available_for_recovery)
+    capital_still_to_recover = max(0.0, target - cash_available_for_recovery)
 
     metrics = st.columns(4)
     metrics[0].metric("Sales today", peso(sales))
@@ -567,11 +568,16 @@ with tab_dashboard:
     m1, m2, m3 = st.columns(3)
     m1.metric("Initial capital", peso(target))
     m2.metric("Current estimated cash on hand", peso(current_cash))
-    m3.metric("Capital still to recover", peso(remaining))
+    m3.metric("Capital still to recover", peso(capital_still_to_recover))
+    st.write(
+        f"**Calculation:** {peso(target)} initial capital − "
+        f"{peso(cash_available_for_recovery)} current cash = "
+        f"**{peso(capital_still_to_recover)} still to recover**"
+    )
     if target > 0:
         progress = min(1.0, max(0.0, capital_recovered / target))
         st.progress(progress, text=f"{progress*100:.1f}% of initial capital represented by current cash")
-    st.caption("This estimates how much of your initial capital is represented by cash currently available; it is not a profit calculation. Actual cash can differ if transactions were not recorded, opening cash is incorrect, or money was used for unrecorded purchases.")
+    st.caption("This is a cash-based estimate, not a full profit or inventory valuation. It assumes the opening cash setting is correct and all cash transactions and business expenses have been recorded. Initial capital is funding, not an expense; remove it from expenses only if it was entered there by mistake.")
 
 with tab_expenses:
     st.subheader("Record an Expense")
