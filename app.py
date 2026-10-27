@@ -604,16 +604,23 @@ with tab_dashboard:
             )
 
         with st.form("delete_all_time_expense_form"):
-            expense_ids = all_expenses["id"].astype(int).tolist()
-            selected_expense_id = st.selectbox(
+            # Use readable string options so Streamlit's dropdown search can
+            # match the expense ID, date, category, description, or amount.
+            expense_options = {}
+            for _, expense_row in all_expenses.iterrows():
+                expense_id = int(expense_row["id"])
+                label = (
+                    f"ID {expense_id} — {expense_row['spent_at']} — "
+                    f"{expense_row['category']} — {expense_row['description']} — "
+                    f"{peso(expense_row['amount'])}"
+                )
+                expense_options[label] = expense_id
+            selected_expense_label = st.selectbox(
                 "Select an expense record to delete",
-                options=expense_ids,
-                format_func=lambda expense_id: (
-                    f"ID {expense_id} — "
-                    f"{all_expenses.loc[all_expenses['id'] == expense_id, 'description'].iloc[0]} — "
-                    f"{peso(all_expenses.loc[all_expenses['id'] == expense_id, 'amount'].iloc[0])}"
-                ),
+                options=list(expense_options.keys()),
+                help="Open the dropdown and type to search by ID, date, category, description, or amount.",
             )
+            selected_expense_id = expense_options[selected_expense_label]
             confirm_expense_delete = st.checkbox(
                 "I confirm that I want to permanently delete this expense record."
             )
