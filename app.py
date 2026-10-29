@@ -79,7 +79,7 @@ def get_connection_pool():
         min_size=1,
         max_size=5,
         timeout=10,
-        kwargs={"row_factory": dict_row, "connect_timeout": 10},
+        kwargs={"row_factory": dict_row, "connect_timeout": 10, "prepare_threshold": None},
         configure=configure_connection,
         open=True,
     )
