@@ -1,6 +1,7 @@
 import os
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -34,9 +35,11 @@ def now_local():
     return datetime.now(TZ).replace(tzinfo=None, microsecond=0)
 
 class CompatConnection:
-    """Small compatibility layer for the existing SQLite-style query calls."""
-    def __init__(self, connection):
+    """Compatibility wrapper that returns pooled connections after each transaction."""
+    def __init__(self, connection, pool):
         self.connection = connection
+        self.pool = pool
+        self.changed_data = False
 
     def __enter__(self):
         return self
@@ -47,23 +50,48 @@ class CompatConnection:
                 self.connection.rollback()
             else:
                 self.connection.commit()
+                # Refresh cached reads immediately after a successful write.
+                if self.changed_data:
+                    st.cache_data.clear()
         finally:
-            self.connection.close()
+            self.pool.putconn(self.connection)
         return False
 
     def execute(self, query, params=None):
+        normalized = query.lstrip().upper()
+        if normalized.startswith(("INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DROP ", "TRUNCATE ")):
+            self.changed_data = True
         query = query.replace("?", "%s")
         return self.connection.execute(query, params or ())
 
 
-def connect():
+@st.cache_resource
+def get_connection_pool():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is missing. Add it in Streamlit Community Cloud → App settings → Secrets.")
-    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
-    conn.execute("SET TIME ZONE 'Asia/Manila'")
-    return CompatConnection(conn)
+
+    def configure_connection(conn):
+        conn.execute("SET TIME ZONE 'Asia/Manila'")
+        conn.commit()
+
+    return ConnectionPool(
+        conninfo=DATABASE_URL,
+        min_size=1,
+        max_size=5,
+        timeout=10,
+        kwargs={"row_factory": dict_row, "connect_timeout": 10},
+        configure=configure_connection,
+        open=True,
+    )
 
 
+def connect():
+    pool = get_connection_pool()
+    conn = pool.getconn()
+    return CompatConnection(conn, pool)
+
+
+@st.cache_resource
 def init_db():
     # Tables were created in Supabase SQL Editor. CREATE IF NOT EXISTS is safe on reruns.
     with connect() as con:
@@ -107,7 +135,9 @@ def init_db():
                 "INSERT INTO inventory_items(item_name,unit,stock_qty,usage_per_cup,reorder_level) VALUES(?,?,?,?,?) ON CONFLICT (item_name) DO NOTHING",
                 (item_name, unit, stock_qty, usage_per_cup, default_levels.get(item_name, 10))
             )
+    return True
 
+@st.cache_data(ttl=60)
 def get_setting(key, default="0"):
     with connect() as con:
         row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -118,6 +148,7 @@ def set_setting(key, value):
         con.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                     (key, str(value)))
 
+@st.cache_data(ttl=60)
 def load_orders(start=None, end=None):
     query = "SELECT * FROM orders"
     params = []
@@ -129,6 +160,7 @@ def load_orders(start=None, end=None):
         rows = con.execute(query, params).fetchall()
     return pd.DataFrame([dict(r) for r in rows])
 
+@st.cache_data(ttl=60)
 def load_expenses(start=None, end=None):
     query = "SELECT * FROM expenses"
     params = []
@@ -143,6 +175,7 @@ def load_expenses(start=None, end=None):
 def peso(value):
     return f"₱{float(value):,.2f}"
 
+@st.cache_data(ttl=60)
 def load_inventory():
     with connect() as con:
         rows = con.execute("SELECT * FROM inventory_items ORDER BY item_name").fetchall()
